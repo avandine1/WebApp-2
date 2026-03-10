@@ -21,11 +21,45 @@
     pointer-events: none;
     transition: opacity 1s;
   }
+  #modes {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    display: flex;
+    gap: 6px;
+    z-index: 10;
+  }
+  .mode-btn {
+    background: none;
+    border: 1px solid rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.35);
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    padding: 5px 10px;
+    cursor: pointer;
+    border-radius: 2px;
+    transition: all 0.2s;
+  }
+  .mode-btn:hover {
+    border-color: rgba(255,255,255,0.5);
+    color: rgba(255,255,255,0.7);
+  }
+  .mode-btn.active {
+    border-color: rgba(255,255,255,0.7);
+    color: rgba(255,255,255,0.9);
+  }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="hint">move your cursor</div>
+<div id="modes">
+  <button class="mode-btn active" id="btn-fluid" onclick="setMode('fluid')">fluid</button>
+  <button class="mode-btn" id="btn-smoke" onclick="setMode('smoke')">smoke</button>
+  <button class="mode-btn" id="btn-sparks" onclick="setMode('sparks')">sparks</button>
+</div>
 <script>
 // WebGL Fluid Simulation
 // Navier-Stokes based fluid on GPU
@@ -509,27 +543,13 @@ function correctDeltaY(d) {
   return ar > 1 ? d / ar : d;
 }
 
-canvas.addEventListener('mousemove', e => {
-  const p = pointers[0];
-  p.down = true;
-  updatePointerMoveData(p, e.clientX, e.clientY);
-  if (!hintGone) { hint.style.opacity = '0'; hintGone = true; }
-});
-
-canvas.addEventListener('touchmove', e => {
-  e.preventDefault();
-  const touches = e.targetTouches;
-  while (touches.length >= pointers.length) pointers.push(new Pointer());
-  for (let i = 0; i < touches.length; i++) {
-    pointers[i+1].down = true;
-    updatePointerMoveData(pointers[i+1], touches[i].clientX, touches[i].clientY);
-  }
-}, { passive: false });
-
 let hintGone = false;
 
 // Step functions
-function step(dt) {
+function step(dt, modeCfg) {
+  const curlAmt = modeCfg ? modeCfg.curl : CURL;
+  const densDiss = modeCfg ? modeCfg.densityDiss : DENSITY_DISSIPATION;
+  const velDiss = modeCfg ? modeCfg.velocityDiss : VELOCITY_DISSIPATION;
   gl.disable(gl.BLEND);
 
   // Curl
@@ -543,7 +563,7 @@ function step(dt) {
   gl.uniform2f(vorticityProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
   gl.uniform1i(vorticityProgram.uniforms.uVelocity, velocity.read.attach(0));
   gl.uniform1i(vorticityProgram.uniforms.uCurl, curl.attach(1));
-  gl.uniform1f(vorticityProgram.uniforms.curl, CURL);
+  gl.uniform1f(vorticityProgram.uniforms.curl, curlAmt);
   gl.uniform1f(vorticityProgram.uniforms.dt, dt);
   blit(velocity.write);
   velocity.swap();
@@ -587,7 +607,7 @@ function step(dt) {
   gl.uniform1i(advectionProgram.uniforms.uVelocity, velId);
   gl.uniform1i(advectionProgram.uniforms.uSource, velId);
   gl.uniform1f(advectionProgram.uniforms.dt, dt);
-  gl.uniform1f(advectionProgram.uniforms.dissipation, VELOCITY_DISSIPATION);
+  gl.uniform1f(advectionProgram.uniforms.dissipation, velDiss);
   blit(velocity.write);
   velocity.swap();
 
@@ -595,18 +615,19 @@ function step(dt) {
   gl.uniform2f(advectionProgram.uniforms.dyeTexelSize, dye.texelSizeX, dye.texelSizeY);
   gl.uniform1i(advectionProgram.uniforms.uVelocity, velocity.read.attach(0));
   gl.uniform1i(advectionProgram.uniforms.uSource, dye.read.attach(1));
-  gl.uniform1f(advectionProgram.uniforms.dissipation, DENSITY_DISSIPATION);
+  gl.uniform1f(advectionProgram.uniforms.dissipation, densDiss);
   blit(dye.write);
   dye.swap();
 }
 
-function splat(x, y, dx, dy, color) {
+function splat(x, y, dx, dy, color, radiusOverride) {
+  const r = radiusOverride !== undefined ? radiusOverride : SPLAT_RADIUS;
   gl.useProgram(splatProgram.program);
   gl.uniform1i(splatProgram.uniforms.uTarget, velocity.read.attach(0));
   gl.uniform1f(splatProgram.uniforms.aspectRatio, canvas.width / canvas.height);
   gl.uniform2f(splatProgram.uniforms.point, x, y);
   gl.uniform3f(splatProgram.uniforms.color, dx, dy, 0);
-  gl.uniform1f(splatProgram.uniforms.radius, correctRadius(SPLAT_RADIUS / 100));
+  gl.uniform1f(splatProgram.uniforms.radius, correctRadius(r / 100));
   blit(velocity.write);
   velocity.swap();
 
@@ -629,7 +650,196 @@ function render(target) {
   blit(target);
 }
 
-// Auto splat on start
+// ── Sim config per mode ──────────────────────────────────────────
+const modeConfigs = {
+  fluid: { curl: 30, densityDiss: 0.93, velocityDiss: 0.98, splatRadius: 0.07, splatForce: 8000 },
+  smoke: { curl: 4,  densityDiss: 0.985, velocityDiss: 0.94, splatRadius: 0.18, splatForce: 2200 },
+};
+
+let emitMode = 'fluid';
+let cfg = modeConfigs.fluid;
+
+// ── Sparks canvas 2D system ──────────────────────────────────────
+const sparksCanvas = document.createElement('canvas');
+sparksCanvas.style.cssText = 'position:fixed;top:0;left:0;pointer-events:none;z-index:5;display:none;';
+document.body.appendChild(sparksCanvas);
+const sx = sparksCanvas.getContext('2d');
+sparksCanvas.width = window.innerWidth;
+sparksCanvas.height = window.innerHeight;
+window.addEventListener('resize', () => {
+  sparksCanvas.width = window.innerWidth;
+  sparksCanvas.height = window.innerHeight;
+});
+
+const particles = [];
+class Spark {
+  constructor(x, y, vx, vy) {
+    this.x = x; this.y = y;
+    this.vx = vx + (Math.random() - 0.5) * 3;
+    this.vy = vy + (Math.random() - 0.5) * 3;
+    this.life = 1.0;
+    this.decay = 0.004 + Math.random() * 0.008;
+    this.size = 1.2 + Math.random() * 2;
+    // hot white-orange-red gradient based on life
+    this.hue = 20 + Math.random() * 30; // orange to yellow
+  }
+  update(dt) {
+    this.vy += 5 * dt; // barely any gravity - sparks float like embers
+    this.vx *= 0.997;
+    this.x += this.vx * dt * 60;
+    this.y += this.vy * dt * 60;
+    this.life -= this.decay;
+  }
+  draw(ctx) {
+    const t = this.life;
+    const r = 255;
+    const g = Math.floor(t > 0.6 ? 255 : t * 255 * 1.4);
+    const b = Math.floor(t > 0.8 ? 255 * (t - 0.8) * 5 : 0);
+    ctx.save();
+    ctx.globalAlpha = Math.min(t * 2, 1);
+    // subtle outer glow
+    const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.size * t * 2.5);
+    grad.addColorStop(0, `rgba(${r},${g},${b},0.25)`);
+    grad.addColorStop(1, `rgba(${r},${Math.floor(g*0.3)},0,0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size * t * 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    // bright core
+    ctx.shadowBlur = 4;
+    ctx.shadowColor = `rgb(${r},${Math.floor(g*0.8)},0)`;
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size * t, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+let mouseX = 0, mouseY = 0, lastMouseX = 0, lastMouseY = 0;
+
+// Use document-level events so sparks work regardless of which canvas is on top
+document.addEventListener('mousemove', e => {
+  if (!hintGone) { hint.style.opacity = '0'; hintGone = true; }
+  mouseX = e.clientX; mouseY = e.clientY;
+  if (emitMode !== 'sparks') {
+    const p = pointers[0];
+    p.down = true;
+    updatePointerMoveData(p, e.clientX, e.clientY);
+  }
+});
+
+document.addEventListener('touchmove', e => {
+  e.preventDefault();
+  mouseX = e.touches[0].clientX;
+  mouseY = e.touches[0].clientY;
+  if (emitMode !== 'sparks') {
+    const touches = e.targetTouches;
+    while (touches.length >= pointers.length) pointers.push(new Pointer());
+    for (let i = 0; i < touches.length; i++) {
+      pointers[i+1].down = true;
+      updatePointerMoveData(pointers[i+1], touches[i].clientX, touches[i].clientY);
+    }
+  }
+}, { passive: false });
+
+// Click burst for all modes
+document.addEventListener('mousedown', e => {
+  if (e.target.classList.contains('mode-btn')) return;
+  triggerBurst(e.clientX, e.clientY);
+});
+document.addEventListener('touchstart', e => {
+  if (e.target.classList.contains('mode-btn')) return;
+  triggerBurst(e.touches[0].clientX, e.touches[0].clientY);
+}, { passive: true });
+
+function triggerBurst(x, y) {
+  if (emitMode === 'sparks') {
+    // Shockwave: push existing particles outward instantly at half speed
+    const cx = x, cy = y;
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      const dx = p.x - cx, dy = p.y - cy;
+      const dist = Math.sqrt(dx*dx + dy*dy) + 1;
+      const force = Math.min(300 / dist, 11);
+      p.vx += (dx / dist) * force;
+      p.vy += (dy / dist) * force;
+    }
+    // New sparks from center - fast explosion
+    for (let i = 0; i < 180; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 10 + Math.random() * 28;
+      particles.push(new Spark(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed - 8));
+    }
+  } else {
+    // Pressure wave: rings all fire at once, half speed
+    const tx = x / canvas.width;
+    const ty = 1.0 - y / canvas.height;
+    const rings = 3;
+    const perRing = 16;
+    for (let r = 0; r < rings; r++) {
+      const force = cfg.splatForce * (1.0 - r * 0.2); // halved from before
+      const rad = cfg.splatRadius * (1.0 + r * 0.8);
+      const offsetScale = r * 0.04;
+      for (let i = 0; i < perRing; i++) {
+        const angle = (i / perRing) * Math.PI * 2;
+        const ox = tx + Math.cos(angle) * offsetScale;
+        const oy = ty + Math.sin(angle) * offsetScale;
+        const color = emitMode === 'smoke' ? getSmokeColor() : (() => {
+          const c = generateColor(); return { r: c.r * 6, g: c.g * 6, b: c.b * 6 };
+        })();
+        splat(ox, oy, Math.cos(angle) * force, Math.sin(angle) * force, color, rad);
+      }
+    }
+  }
+}
+
+// ── Clear helpers ────────────────────────────────────────────────
+function clearFluid() {
+  // Zero out the dye buffer by blitting black
+  gl.useProgram(clearProgram.program);
+  gl.uniform1i(clearProgram.uniforms.uTexture, dye.read.attach(0));
+  gl.uniform1f(clearProgram.uniforms.value, 0.0);
+  blit(dye.write);
+  dye.swap();
+  gl.uniform1i(clearProgram.uniforms.uTexture, dye.read.attach(0));
+  gl.uniform1f(clearProgram.uniforms.value, 0.0);
+  blit(dye.write);
+  dye.swap();
+  // Also clear velocity
+  gl.uniform1i(clearProgram.uniforms.uTexture, velocity.read.attach(0));
+  gl.uniform1f(clearProgram.uniforms.value, 0.0);
+  blit(velocity.write);
+  velocity.swap();
+}
+
+// ── Mode switching ───────────────────────────────────────────────
+function setMode(mode) {
+  if (emitMode === 'sparks') {
+    particles.length = 0;
+    sx.clearRect(0, 0, sparksCanvas.width, sparksCanvas.height);
+  }
+  clearFluid();
+  emitMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn-' + mode).classList.add('active');
+  sparksCanvas.style.display = mode === 'sparks' ? 'block' : 'none';
+  canvas.style.display = 'block';
+  cfg = modeConfigs[mode] || modeConfigs.fluid;
+}
+
+// ── Color helpers ────────────────────────────────────────────────
+function getFluidColor(p) {
+  return { r: p.color.r * 6, g: p.color.g * 6, b: p.color.b * 6 };
+}
+function getSmokeColor() {
+  // Slight bluish-grey, varies a little for depth
+  const v = 0.3 + Math.random() * 0.25;
+  const blue = v * 1.08;
+  return { r: v * 0.88, g: v * 0.92, b: Math.min(blue, 1.0) };
+}
+
+// ── Auto splat on start ──────────────────────────────────────────
 function multipleSplats(amount) {
   for (let i = 0; i < amount; i++) {
     const color = generateColor();
@@ -641,24 +851,68 @@ function multipleSplats(amount) {
 }
 multipleSplats(Math.random() * 20 + 5);
 
+// ── Main loop ────────────────────────────────────────────────────
 let lastTime = Date.now();
 function update() {
   const now = Date.now();
   let dt = Math.min((now - lastTime) / 1000, 0.016);
   lastTime = now;
 
-  pointers.forEach(p => {
-    if (p.moved) {
-      p.moved = false;
-      const color = { r: p.color.r * 6, g: p.color.g * 6, b: p.color.b * 6 };
-      splat(p.texcoordX, p.texcoordY, p.deltaX * SPLAT_FORCE, p.deltaY * SPLAT_FORCE, color);
-      // Shift color slowly
-      p.color = generateColor();
+  if (emitMode === 'sparks') {
+    // Spawn sparks from mouse movement
+    const dx = mouseX - lastMouseX, dy = mouseY - lastMouseY;
+    const speed = Math.sqrt(dx*dx + dy*dy);
+    // Always emit a trickle, more when moving
+    const count = Math.max(2, Math.floor(speed * 0.6));
+    for (let i = 0; i < count; i++) {
+      const t = Math.random();
+      particles.push(new Spark(
+        mouseX - dx * t,
+        mouseY - dy * t,
+        dx * 0.3 + (Math.random()-0.5)*3,
+        dy * 0.3 + (Math.random()-0.5)*3
+      ));
     }
-  });
+    lastMouseX = mouseX; lastMouseY = mouseY;
 
-  step(dt);
-  render(null);
+    // Update + draw sparks
+    sx.clearRect(0, 0, sparksCanvas.width, sparksCanvas.height);
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.update(dt);
+      if (p.life <= 0 || p.y > sparksCanvas.height + 10) { particles.splice(i, 1); continue; }
+      p.draw(sx);
+    }
+
+    // Always keep fluid sim ticking in background (so switching back looks alive)
+    step(dt, cfg);
+    render(null);
+
+  } else {
+    // Fluid / Smoke via WebGL
+    pointers.forEach(p => {
+      if (p.moved) {
+        p.moved = false;
+        let color;
+        if (emitMode === 'smoke') {
+          color = getSmokeColor();
+        } else {
+          color = getFluidColor(p);
+          p.color = generateColor();
+        }
+        splat(p.texcoordX, p.texcoordY,
+          p.deltaX * cfg.splatForce,
+          p.deltaY * cfg.splatForce,
+          color,
+          cfg.splatRadius
+        );
+      }
+    });
+
+    step(dt, cfg);
+    render(null);
+  }
+
   requestAnimationFrame(update);
 }
 update();
