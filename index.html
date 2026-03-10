@@ -721,15 +721,33 @@ document.addEventListener('touchmove', e => {
   }
 }, { passive: false });
 
-// Click burst for all modes
+// Click burst for desktop (mousedown)
 document.addEventListener('mousedown', e => {
   if (e.target.classList.contains('mode-btn')) return;
   triggerBurst(e.clientX, e.clientY);
 });
+
+// Double-tap burst for mobile
+let lastTapTime = 0, lastTapX = 0, lastTapY = 0;
 document.addEventListener('touchstart', e => {
   if (e.target.classList.contains('mode-btn')) return;
-  triggerBurst(e.touches[0].clientX, e.touches[0].clientY);
-}, { passive: true });
+  const touch = e.touches[0];
+  const now = Date.now();
+  const dt = now - lastTapTime;
+  const dx = touch.clientX - lastTapX;
+  const dy = touch.clientY - lastTapY;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  // Double tap: within 300ms and 40px of last tap
+  if (dt < 300 && dist < 40) {
+    e.preventDefault();
+    triggerBurst(touch.clientX, touch.clientY);
+    lastTapTime = 0; // reset so triple tap doesn't re-trigger
+  } else {
+    lastTapTime = now;
+    lastTapX = touch.clientX;
+    lastTapY = touch.clientY;
+  }
+}, { passive: false });
 
 function triggerBurst(x, y) {
   if (emitMode === 'sparks') {
