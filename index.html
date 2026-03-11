@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Fluid Studio</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+  * { margin: 0; padding: 0; box-sizing: border-box; touch-action: none; }
   body { background: #000; overflow: hidden; width: 100vw; height: 100vh; color: #fff; font-family: 'Courier New', monospace; }
   canvas { display: block; position: fixed; top: 0; left: 0; }
   
@@ -14,7 +14,7 @@
 
   #hint {
     position: fixed;
-    bottom: 80px;
+    bottom: 90px;
     left: 50%;
     transform: translateX(-50%);
     color: rgba(255,255,255,0.18);
@@ -24,16 +24,21 @@
     pointer-events: none;
     transition: opacity 1s;
     z-index: 10;
+    text-align: center;
+    width: 100%;
   }
 
   #modes {
     position: fixed;
-    bottom: 30px;
+    bottom: 25px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
-    gap: 10px;
+    gap: 8px;
     z-index: 10;
+    padding: 0 10px;
+    width: auto;
+    max-width: 95vw;
   }
 
   .mode-btn {
@@ -42,13 +47,14 @@
     color: rgba(255,255,255,0.5);
     font-family: inherit;
     font-size: 10px;
-    letter-spacing: 0.15em;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
-    padding: 8px 16px;
+    padding: 10px 14px;
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: 6px;
     transition: all 0.2s;
     backdrop-filter: blur(4px);
+    white-space: nowrap;
   }
 
   .mode-btn:hover { border-color: rgba(255,255,255,0.6); color: rgba(255,255,255,0.9); }
@@ -58,47 +64,79 @@
     position: fixed;
     top: 20px;
     right: 20px;
-    background: rgba(0,0,0,0.8);
+    background: rgba(0,0,0,0.85);
     border: 1px solid rgba(255,255,255,0.2);
     padding: 15px;
-    border-radius: 8px;
-    width: 200px;
+    border-radius: 12px;
+    width: 220px;
     z-index: 20;
-    backdrop-filter: blur(8px);
+    backdrop-filter: blur(12px);
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s;
   }
 
-  .control-group { margin-bottom: 12px; transition: opacity 0.3s; }
-  
-  label { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; color: rgba(255,255,255,0.6); }
-  input[type=range] { width: 100%; height: 2px; background: rgba(255,255,255,0.2); appearance: none; outline: none; }
-  input[type=range]::-webkit-slider-thumb { appearance: none; width: 10px; height: 10px; background: #fff; cursor: pointer; border-radius: 50%; }
-  .val { float: right; color: #fff; }
+  #controls.hidden {
+    transform: translateX(250px);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  #toggle-settings {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 21;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.8);
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 10px;
+    cursor: pointer;
+  }
+
+  .control-group { margin-bottom: 15px; }
+  label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px; color: rgba(255,255,255,0.6); }
+  input[type=range] { width: 100%; height: 4px; background: rgba(255,255,255,0.1); appearance: none; outline: none; border-radius: 2px; }
+  input[type=range]::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; background: #fff; cursor: pointer; border-radius: 50%; border: 2px solid #333; }
+  .val { float: right; color: #fff; font-weight: bold; }
 
   #reset-btn {
     width: 100%;
-    margin-top: 10px;
+    margin-top: 5px;
     background: rgba(255,50,50,0.15);
     border: 1px solid rgba(255,50,50,0.4);
     color: rgba(255,100,100,0.8);
-    font-size: 9px;
-    padding: 6px;
+    font-size: 10px;
+    padding: 10px;
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: 6px;
     transition: all 0.2s;
     text-transform: uppercase;
     font-family: inherit;
+  }
+
+  @media (max-width: 768px) {
+    #controls { width: calc(100% - 40px); top: 70px; right: 20px; }
+    #hint { font-size: 9px; bottom: 100px; }
+    .mode-btn { padding: 12px 8px; font-size: 8px; flex: 1; text-align: center; }
   }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <canvas id="lavaCanvas"></canvas>
-<div id="hint">drag the balls</div>
+<div id="hint">drag the spheres or tap screen</div>
+
+<div id="toggle-settings">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+</div>
 
 <div id="controls">
   <div class="control-group">
-    <label>Turbulence <span class="val" id="v-curl">30</span></label>
-    <input type="range" id="curl" min="0" max="100" value="30">
+    <label>Turbulence <span class="val" id="v-curl">10</span></label>
+    <input type="range" id="curl" min="1" max="40" value="10">
   </div>
   <div class="control-group">
     <label>Dissipation <span class="val" id="v-diss">0.97</span></label>
@@ -136,12 +174,12 @@ const lx = lavaCanvas.getContext('2d');
 let gl;
 
 const config = {
-  SIM_RESOLUTION: 128,
+  SIM_RESOLUTION: window.innerWidth < 768 ? 64 : 128,
   DYE_RESOLUTION: 1024,
   DENSITY_DISSIPATION: 0.97,
   VELOCITY_DISSIPATION: 0.98,
   PRESSURE_ITERATIONS: 20,
-  CURL: 30,
+  CURL: 10,
   SPLAT_RADIUS: 0.07,
   SPLAT_FORCE: 8000
 };
@@ -176,7 +214,6 @@ function initFBOs() {
   pressure = createDoubleFBO(simW, simH, r.internalFormat, r.format, texType, gl.NEAREST);
 }
 
-// --- WEBGL SETUP ---
 const ext = {};
 function getWebGLContext() {
   const params = { alpha: true, depth: false, antialias: false };
@@ -215,6 +252,7 @@ function createProgram(vs, fs) {
   return { program: p, uniforms: u };
 }
 
+// SHADERS
 const baseVS = compileShader(gl.VERTEX_SHADER, `
   precision highp float; attribute vec2 aPosition; varying vec2 vUv, vL, vR, vT, vB; uniform vec2 texelSize;
   void main () {
@@ -275,20 +313,23 @@ function blit(target) {
   gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
 }
 
+let dye, velocity, divergence, curl, pressure;
+initFBOs();
+
 // --- SPHERES LOGIC ---
 class Blob {
-  constructor(index) {
+  constructor() {
     this.x = Math.random() * window.innerWidth; this.y = Math.random() * window.innerHeight;
     this.vx = (Math.random() - 0.5) * 150; this.vy = (Math.random() - 0.5) * 150;
-    this.baseR = 0.8 + Math.random() * 0.4;
-    this.r = 0; // Calculated dynamically
+    this.baseScale = 0.8 + Math.random() * 0.4;
+    this.r = 45;
     this.dragging = false; 
     this.hue = Math.random(); 
     this.rgb = HSVtoRGB(this.hue, 0.9, 0.9);
     this.emissionTimer = 0;
   }
   update(dt, blobs, mx, my) {
-    this.r = this.baseR * config.SPLAT_RADIUS * 800; // Radius linked to slider
+    this.r = this.baseScale * config.SPLAT_RADIUS * 800;
     const W = window.innerWidth, H = window.innerHeight;
     if (this.dragging) { 
       this.vx += (mx - this.x)*70*dt; this.vy += (my - this.y)*70*dt; 
@@ -316,7 +357,7 @@ class Blob {
 }
 
 let blobs = [];
-function initBlobs() { blobs = []; for (let i = 0; i < 7; i++) blobs.push(new Blob(i)); }
+function initBlobs() { blobs = []; for (let i = 0; i < 7; i++) blobs.push(new Blob()); }
 
 // --- UI HANDLERS ---
 document.getElementById('curl').oninput = e => { config.CURL = parseFloat(e.target.value); document.getElementById('v-curl').innerText = e.target.value; };
@@ -332,6 +373,10 @@ document.getElementById('reset-btn').onclick = () => {
     document.getElementById(id).value = config[key];
     document.getElementById('v-' + id).innerText = config[key];
   });
+};
+
+document.getElementById('toggle-settings').onclick = () => {
+  document.getElementById('controls').classList.toggle('hidden');
 };
 
 function splat(x, y, dx, dy, color, skipDye = false) {
@@ -367,14 +412,11 @@ function setMode(m) {
   emitMode = m; document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active')); 
   document.getElementById('btn-'+m).classList.add('active');
   lavaCanvas.style.display = m === 'spheres' ? 'block' : 'none';
-  
   gl.useProgram(clearProg.program); gl.uniform1f(clearProg.uniforms.value, 0.0);
   blit(dye.read); blit(dye.write); blit(velocity.read); blit(velocity.write);
-  
   if (m === 'smoke') { config.CURL = 4; config.DENSITY_DISSIPATION = 0.985; }
-  else if (m === 'spheres') { config.CURL = 20; config.DENSITY_DISSIPATION = 2.4; }
-  else { config.CURL = 30; config.DENSITY_DISSIPATION = 0.97; }
-  
+  else if (m === 'spheres') { config.CURL = 10; config.DENSITY_DISSIPATION = 2.4; }
+  else { config.CURL = 10; config.DENSITY_DISSIPATION = 0.97; }
   ['curl', 'diss', 'radius'].forEach(id => { 
     const key = id === 'diss' ? 'DENSITY_DISSIPATION' : (id === 'radius' ? 'SPLAT_RADIUS' : 'CURL');
     document.getElementById(id).value = config[key]; document.getElementById('v-'+id).innerText = config[key]; 
@@ -382,17 +424,25 @@ function setMode(m) {
 }
 
 // --- INTERACTIONS ---
-const pointer = { x: 0, y: 0, px: 0, py: 0, dx: 0, dy: 0, moved: false, down: false };
-window.addEventListener('mousemove', e => {
-  if (e.target.closest('#modes') || e.target.closest('#controls')) return;
-  pointer.px = pointer.x; pointer.py = pointer.y; pointer.x = e.clientX / canvas.width; pointer.y = 1.0 - e.clientY / canvas.height;
-  pointer.dx = pointer.x - pointer.px; pointer.dy = pointer.y - pointer.py; pointer.moved = true;
-});
+const pointer = { x: 0.5, y: 0.5, px: 0.5, py: 0.5, dx: 0, dy: 0, moved: false, down: false };
+function handleInput(clientX, clientY, isDown) {
+  if (!hintGone) { hint.style.opacity = '0'; hintGone = true; }
+  pointer.px = pointer.x; pointer.py = pointer.y;
+  pointer.x = clientX / canvas.width; pointer.y = 1.0 - clientY / canvas.height;
+  pointer.dx = pointer.x - pointer.px; pointer.dy = pointer.y - pointer.py;
+  pointer.moved = true;
+  if (isDown !== undefined) pointer.down = isDown;
+}
 
-let draggedBlob = null;
+const isInputTarget = (e) => {
+  if (e.target.closest('#modes') || e.target.closest('#controls') || e.target.closest('#toggle-settings')) return false;
+  return true;
+};
+
+window.addEventListener('mousemove', e => handleInput(e.clientX, e.clientY));
 window.addEventListener('mousedown', e => {
-  if (e.target.closest('#modes') || e.target.closest('#controls')) return;
-  pointer.down = true;
+  if (!isInputTarget(e)) return;
+  handleInput(e.clientX, e.clientY, true);
   if (emitMode === 'spheres') {
     let best = null, bestDist = Infinity;
     for (let b of blobs) { const d = Math.sqrt((b.x - e.clientX)**2 + (b.y - e.clientY)**2); if (d < b.r * 1.5 && d < bestDist) { bestDist = d; best = b; } }
@@ -400,12 +450,31 @@ window.addEventListener('mousedown', e => {
   } else {
     const burstColor = HSVtoRGB(Math.random(), 0.9, 0.8);
     for (let i = 0; i < 32; i++) { 
-        const angle = (i / 32) * Math.PI * 2; 
-        splat(pointer.x, pointer.y, Math.cos(angle) * config.SPLAT_FORCE, Math.sin(angle) * config.SPLAT_FORCE, {r:burstColor.r*10, g:burstColor.g*10, b:burstColor.b*10}); 
+      const angle = (i / 32) * Math.PI * 2; 
+      splat(pointer.x, pointer.y, Math.cos(angle) * config.SPLAT_FORCE, Math.sin(angle) * config.SPLAT_FORCE, {r:burstColor.r*10, g:burstColor.g*10, b:burstColor.b*10}); 
     }
   }
 });
 window.addEventListener('mouseup', () => { pointer.down = false; if (draggedBlob) { draggedBlob.dragging = false; draggedBlob = null; } });
+
+window.addEventListener('touchstart', e => {
+  if (!isInputTarget(e)) return;
+  const t = e.touches[0]; handleInput(t.clientX, t.clientY, true);
+  if (emitMode === 'spheres') {
+    let best = null, bestDist = Infinity;
+    for (let b of blobs) { const d = Math.sqrt((b.x - t.clientX)**2 + (b.y - t.clientY)**2); if (d < b.r * 1.5 && d < bestDist) { bestDist = d; best = b; } }
+    if (best) { draggedBlob = best; best.dragging = true; }
+  } else {
+    const bc = HSVtoRGB(Math.random(), 0.9, 0.8);
+    for (let i = 0; i < 32; i++) { 
+      const angle = (i / 32) * Math.PI * 2; 
+      splat(pointer.x, pointer.y, Math.cos(angle) * config.SPLAT_FORCE, Math.sin(angle) * config.SPLAT_FORCE, {r:bc.r*10, g:bc.g*10, b:bc.b*10}); 
+    }
+  }
+}, {passive: false});
+
+window.addEventListener('touchmove', e => { handleInput(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); }, {passive: false});
+window.addEventListener('touchend', () => { pointer.down = false; if (draggedBlob) { draggedBlob.dragging = false; draggedBlob = null; } });
 
 function resize() {
   canvas.width = window.innerWidth; canvas.height = window.innerHeight;
@@ -416,10 +485,10 @@ window.addEventListener('resize', resize);
 resize(); initBlobs();
 
 let hintGone = false;
+let draggedBlob = null;
+
 function update() {
   const dt = 0.016; const mx = pointer.x * canvas.width, my = (1.0 - pointer.y) * canvas.height;
-  if (!hintGone && pointer.moved) { hint.style.opacity = '0'; hintGone = true; }
-  
   if (emitMode === 'spheres') {
     lx.clearRect(0,0,canvas.width,canvas.height);
     for (let b of blobs) {
@@ -434,11 +503,22 @@ function update() {
       lx.beginPath(); lx.arc(b.x, b.y, b.r, 0, Math.PI*2); lx.fill();
     }
   }
+  
   if (pointer.moved && emitMode !== 'spheres') {
-    pointer.moved = false;
-    const c = HSVtoRGB(Math.random(), 0.9, 0.8);
-    splat(pointer.x, pointer.y, pointer.dx*config.SPLAT_FORCE, pointer.dy*config.SPLAT_FORCE, {r:c.r*6, g:c.g*6, b:c.b*6});
+    // Interaction dead zone (ignoring tiny jitters)
+    const moveDist = Math.sqrt(pointer.dx * pointer.dx + pointer.dy * pointer.dy);
+    if (moveDist > 0.003) {
+      pointer.moved = false;
+      let finalColor;
+      if (emitMode === 'smoke') {
+        finalColor = { r: 0.25, g: 0.26, b: 0.28 }; // Smoky Grey
+      } else {
+        finalColor = HSVtoRGB(Math.random(), 0.9, 0.8); // Fluid Rainbow
+      }
+      splat(pointer.x, pointer.y, pointer.dx*config.SPLAT_FORCE, pointer.dy*config.SPLAT_FORCE, {r:finalColor.r*6, g:finalColor.g*6, b:finalColor.b*6});
+    }
   }
+  
   step(dt);
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); gl.enable(gl.BLEND);
   gl.useProgram(displayProg.program); 
