@@ -63,6 +63,7 @@
   <button class="mode-btn active" id="btn-fluid" onclick="setMode('fluid')">fluid</button>
   <button class="mode-btn" id="btn-smoke" onclick="setMode('smoke')">smoke</button>
   <button class="mode-btn" id="btn-sparks" onclick="setMode('sparks')">sparks</button>
+  <button class="mode-btn" id="btn-lava" onclick="setMode('lava')">lava</button>
 </div>
 <script>
 // WebGL Fluid Simulation
@@ -654,7 +655,197 @@ function render(target) {
   blit(target);
 }
 
-// ── Sim config per mode ──────────────────────────────────────────
+// ── Lava lamp canvas ─────────────────────────────────────────────
+const lavaCanvas = document.createElement('canvas');
+lavaCanvas.style.cssText = 'position:fixed;top:0;left:0;pointer-events:none;z-index:4;display:none;';
+document.body.appendChild(lavaCanvas);
+const lx = lavaCanvas.getContext('2d');
+
+const FIELD_SCALE = 2;
+let fieldW, fieldH;
+const fieldCanvas = document.createElement('canvas');
+const fc = fieldCanvas.getContext('2d');
+
+function resizeLava() {
+  lavaCanvas.width  = window.innerWidth;
+  lavaCanvas.height = window.innerHeight;
+  fieldW = Math.ceil(window.innerWidth  / FIELD_SCALE);
+  fieldH = Math.ceil(window.innerHeight / FIELD_SCALE);
+  fieldCanvas.width  = fieldW;
+  fieldCanvas.height = fieldH;
+}
+resizeLava();
+window.addEventListener('resize', resizeLava);
+
+// Saturated colors — vivid hues that stay distinct when screen-blended
+const LAVA_COLORS = [
+  [255,  60,  60],  // red
+  [255, 140,  20],  // orange
+  [ 60, 220,  60],  // green
+  [ 40, 180, 255],  // blue
+  [220,  60, 255],  // purple
+  [255,  60, 180],  // pink
+  [ 60, 255, 200],  // teal
+  [255, 220,  40],  // yellow
+];
+
+class Blob {
+  constructor(index) {
+    this.x = Math.random() * window.innerWidth;
+    this.y = Math.random() * window.innerHeight;
+    this.vx = (Math.random() - 0.5) * 40;
+    this.vy = (Math.random() - 0.5) * 40;
+    this.r = 40 + Math.random() * 30;
+    this.color = LAVA_COLORS[Math.floor(Math.random() * LAVA_COLORS.length)];
+    this.phase = Math.random() * Math.PI * 2;
+    this.freq = 0.25 + Math.random() * 0.3;
+    this.dragging = false;
+    // Fixed hue spread evenly across blobs, drifts slowly
+    this.hue = (index / 8) + Math.random() * 0.1;
+    this.hueSpeed = 0.02 + Math.random() * 0.03;
+  }
+
+  update(dt, blobs, mx, my) {
+    const W = lavaCanvas.width, H = lavaCanvas.height;
+    const t = Date.now() / 1000;
+
+    if (this.dragging) {
+      // Directly follow mouse with spring
+      this.vx += (mx - this.x) * 25 * dt;
+      this.vy += (my - this.y) * 25 * dt;
+      this.vx *= Math.pow(0.002, dt);
+      this.vy *= Math.pow(0.002, dt);
+    } else {
+      // Gentle buoyancy
+      this.vy += Math.sin(t * this.freq + this.phase) * 12 * dt;
+      // Soft center pull
+      this.vy += (H * 0.5 - this.y) * 0.008 * dt;
+      this.vx += (W * 0.5 - this.x) * 0.003 * dt;
+      // Blob-blob repulsion
+      for (let i = 0; i < blobs.length; i++) {
+        if (blobs[i] === this) continue;
+        const b = blobs[i];
+        const ddx = this.x - b.x, ddy = this.y - b.y;
+        const dd = Math.sqrt(ddx*ddx + ddy*ddy) + 1;
+        const minDist = this.r + b.r;
+        if (dd < minDist * 1.4) {
+          const strength = (1 - dd / (minDist * 1.4)) * 120;
+          this.vx += (ddx / dd) * strength * dt;
+          this.vy += (ddy / dd) * strength * dt;
+        }
+      }
+      // Damping
+      this.vx *= Math.pow(0.05, dt);
+      this.vy *= Math.pow(0.05, dt);
+
+      // Always maintain a minimum drift so blobs never fully stop
+      const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+      const minSpeed = 15;
+      if (speed < minSpeed && speed > 0) {
+        const scale = minSpeed / speed;
+        this.vx *= scale;
+        this.vy *= scale;
+      } else if (speed < 0.1) {
+        // Completely stopped — give a random nudge
+        const a = Math.random() * Math.PI * 2;
+        this.vx = Math.cos(a) * minSpeed;
+        this.vy = Math.sin(a) * minSpeed;
+      }
+    }
+
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+
+    // Boundary bounce
+    const pad = this.r * 0.5;
+    if (this.x < pad)     { this.x = pad;     this.vx =  Math.abs(this.vx) * 0.4; }
+    if (this.x > W - pad) { this.x = W - pad; this.vx = -Math.abs(this.vx) * 0.4; }
+    if (this.y < pad)     { this.y = pad;      this.vy =  Math.abs(this.vy) * 0.4; }
+    if (this.y > H - pad) { this.y = H - pad;  this.vy = -Math.abs(this.vy) * 0.4; }
+  }
+}
+
+const blobs = [];
+function initBlobs() {
+  blobs.length = 0;
+  for (let i = 0; i < 8; i++) blobs.push(new Blob(i));
+}
+initBlobs();
+
+let lavaMouseDown = false;
+let draggedBlob = null;
+
+function lavaPointerDown(x, y) {
+  if (emitMode !== 'lava') return;
+  // Find closest blob within grab radius
+  let best = null, bestDist = Infinity;
+  for (let i = 0; i < blobs.length; i++) {
+    const b = blobs[i];
+    const dx = b.x - x, dy = b.y - y;
+    const d = Math.sqrt(dx*dx + dy*dy);
+    if (d < b.r * 1.5 && d < bestDist) { bestDist = d; best = b; }
+  }
+  if (best) {
+    draggedBlob = best;
+    best.dragging = true;
+  }
+  lavaMouseDown = true;
+}
+
+function lavaPointerUp() {
+  if (draggedBlob) { draggedBlob.dragging = false; draggedBlob = null; }
+  lavaMouseDown = false;
+}
+
+document.addEventListener('mousedown', e => { if (!e.target.closest('.mode-btn')) lavaPointerDown(e.clientX, e.clientY); });
+document.addEventListener('mouseup', lavaPointerUp);
+document.addEventListener('touchstart', e => { if (!e.target.closest('.mode-btn')) lavaPointerDown(e.touches[0].clientX, e.touches[0].clientY); }, { passive: true });
+document.addEventListener('touchend', lavaPointerUp);
+
+function drawLava() {
+  const W = lavaCanvas.width, H = lavaCanvas.height;
+  const fw = fieldW, fh = fieldH;
+  const imgData = fc.createImageData(fw, fh);
+  const data = imgData.data;
+  const THRESHOLD = 1.0;
+  const AA = 0.12; // thin AA band width — just enough to smooth the edge
+
+  for (let py = 0; py < fh; py++) {
+    for (let px = 0; px < fw; px++) {
+      const wx = px * FIELD_SCALE, wy = py * FIELD_SCALE;
+      let sumR = 0, sumG = 0, sumB = 0, field = 0;
+
+      for (let i = 0; i < blobs.length; i++) {
+        const b = blobs[i];
+        const dx = wx - b.x, dy = wy - b.y;
+        const dist2 = dx*dx + dy*dy;
+        const v = (b.r * b.r) / (dist2 + 1);
+        field += v;
+        sumR += b.color[0] * v;
+        sumG += b.color[1] * v;
+        sumB += b.color[2] * v;
+      }
+
+      if (field >= THRESHOLD - AA) {
+        const idx = (py * fw + px) * 4;
+        const inv = 1 / field;
+        // Smooth alpha: 0→1 over the AA band, fully opaque inside
+        const alpha = Math.min((field - (THRESHOLD - AA)) / AA, 1.0);
+        data[idx]   = Math.min(255, sumR * inv);
+        data[idx+1] = Math.min(255, sumG * inv);
+        data[idx+2] = Math.min(255, sumB * inv);
+        data[idx+3] = Math.round(alpha * 255);
+      }
+    }
+  }
+
+  fc.putImageData(imgData, 0, 0);
+
+  lx.clearRect(0, 0, W, H);
+  lx.imageSmoothingEnabled = true;
+  lx.imageSmoothingQuality = 'high';
+  lx.drawImage(fieldCanvas, 0, 0, fw, fh, 0, 0, W, H);
+}
 const modeConfigs = {
   fluid: { curl: 30, densityDiss: 0.962, velocityDiss: 0.98, splatRadius: 0.07, splatForce: 8000 },
   smoke: { curl: 4,  densityDiss: 0.985, velocityDiss: 0.94, splatRadius: 0.13, splatForce: 2200 },
@@ -754,6 +945,9 @@ document.addEventListener('touchstart', e => {
 }, { passive: false });
 
 function triggerBurst(x, y) {
+  if (emitMode === 'lava') {
+    return; // no click burst in lava mode
+  }
   if (emitMode === 'sparks') {
     // Shockwave: push existing particles outward instantly at half speed
     const cx = x, cy = y;
@@ -821,13 +1015,30 @@ function setMode(mode) {
     particles.length = 0;
     sx.clearRect(0, 0, sparksCanvas.width, sparksCanvas.height);
   }
+  if (emitMode === 'lava') {
+    lx.clearRect(0, 0, lavaCanvas.width, lavaCanvas.height);
+  }
   clearFluid();
   emitMode = mode;
   document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('btn-' + mode).classList.add('active');
   sparksCanvas.style.display = mode === 'sparks' ? 'block' : 'none';
-  canvas.style.display = 'block';
+  lavaCanvas.style.display = mode === 'lava' ? 'block' : 'none';
+  canvas.style.display = 'block'; // always visible — fluid underlay in lava mode too
+  canvas.style.opacity = '1';
   cfg = modeConfigs[mode] || modeConfigs.fluid;
+  if (mode === 'lava') {
+    initBlobs();
+    clearFluid();
+    setTimeout(() => {
+      // Seed with vivid random splats identical to fluid mode startup
+      for (let i = 0; i < 18; i++) {
+        const color = generateColor();
+        color.r *= 6; color.g *= 6; color.b *= 6;
+        splat(Math.random(), Math.random(), 800*(Math.random()-0.5), 800*(Math.random()-0.5), color);
+      }
+    }, 50);
+  }
 }
 
 // ── Color helpers ────────────────────────────────────────────────
@@ -860,7 +1071,40 @@ function update() {
   let dt = Math.min((now - lastTime) / 1000, 0.016);
   lastTime = now;
 
-  if (emitMode === 'sparks') {
+  if (emitMode === 'lava') {
+    for (let i = 0; i < blobs.length; i++) {
+      const b = blobs[i];
+      const prevX = b.x, prevY = b.y;
+      b.update(dt, blobs, mouseX, mouseY);
+
+      // Inject blob velocity into fluid sim
+      const dvx = (b.x - prevX) / dt;
+      const dvy = (b.y - prevY) / dt;
+      const spd = Math.sqrt(dvx*dvx + dvy*dvy);
+      if (spd > 1) {
+        const tx = b.x / canvas.width;
+        const ty = 1.0 - b.y / canvas.height;
+        const [r, g, bl2] = b.color;
+        b.hue = (b.hue + b.hueSpeed * dt) % 1.0;
+        const fc3 = HSVtoRGB(b.hue, 1.0, 1.0);
+        const splatR = b.dragging ? b.r * 0.005 : b.r * 0.014;
+        splat(tx, ty, dvx * 3.0, dvy * 3.0,
+          { r: fc3.r * 8, g: fc3.g * 8, b: fc3.b * 8 },
+          splatR);
+      }
+    }
+
+    // Run fluid sim — high dissipation values (shader uses 1/(1+diss*dt) decay)
+    // velocityDiss=40 means decay=1.64/frame → velocity halves in ~1s
+    step(dt, { curl: 0, densityDiss: 0.5, velocityDiss: 40 });
+
+    // Render WebGL fluid first (background)
+    render(null);
+
+    // Draw blob metaball shapes on top of fluid
+    drawLava();
+
+  } else if (emitMode === 'sparks') {
     const dx = mouseX - lastMouseX, dy = mouseY - lastMouseY;
     const speed = Math.sqrt(dx*dx + dy*dy);
 
