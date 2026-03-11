@@ -30,25 +30,29 @@
     z-index: 10;
   }
   .mode-btn {
-    background: none;
-    border: 1px solid rgba(255,255,255,0.2);
-    color: rgba(255,255,255,0.35);
+    background: rgba(0,0,0,0.75);
+    border: 1px solid rgba(255,255,255,0.4);
+    color: rgba(255,255,255,0.6);
     font-family: 'Courier New', monospace;
     font-size: 10px;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    padding: 5px 10px;
+    padding: 6px 12px;
     cursor: pointer;
-    border-radius: 2px;
+    border-radius: 3px;
     transition: all 0.2s;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
   }
   .mode-btn:hover {
-    border-color: rgba(255,255,255,0.5);
-    color: rgba(255,255,255,0.7);
-  }
-  .mode-btn.active {
+    background: rgba(30,30,30,0.9);
     border-color: rgba(255,255,255,0.7);
     color: rgba(255,255,255,0.9);
+  }
+  .mode-btn.active {
+    background: rgba(255,255,255,0.15);
+    border-color: rgba(255,255,255,0.9);
+    color: #fff;
   }
 </style>
 </head>
@@ -652,8 +656,8 @@ function render(target) {
 
 // ── Sim config per mode ──────────────────────────────────────────
 const modeConfigs = {
-  fluid: { curl: 30, densityDiss: 0.93, velocityDiss: 0.98, splatRadius: 0.07, splatForce: 8000 },
-  smoke: { curl: 4,  densityDiss: 0.985, velocityDiss: 0.94, splatRadius: 0.18, splatForce: 2200 },
+  fluid: { curl: 30, densityDiss: 0.962, velocityDiss: 0.98, splatRadius: 0.07, splatForce: 8000 },
+  smoke: { curl: 4,  densityDiss: 0.985, velocityDiss: 0.94, splatRadius: 0.13, splatForce: 2200 },
 };
 
 let emitMode = 'fluid';
@@ -698,6 +702,7 @@ let mouseX = 0, mouseY = 0, lastMouseX = 0, lastMouseY = 0;
 
 // Use document-level events so sparks work regardless of which canvas is on top
 document.addEventListener('mousemove', e => {
+  if (e.target.closest('.mode-btn')) return;
   if (!hintGone) { hint.style.opacity = '0'; hintGone = true; }
   mouseX = e.clientX; mouseY = e.clientY;
   if (emitMode !== 'sparks') {
@@ -723,25 +728,24 @@ document.addEventListener('touchmove', e => {
 
 // Click burst for desktop (mousedown)
 document.addEventListener('mousedown', e => {
-  if (e.target.classList.contains('mode-btn')) return;
+  if (e.target.closest('.mode-btn')) return;
   triggerBurst(e.clientX, e.clientY);
 });
 
 // Double-tap burst for mobile
 let lastTapTime = 0, lastTapX = 0, lastTapY = 0;
 document.addEventListener('touchstart', e => {
-  if (e.target.classList.contains('mode-btn')) return;
+  if (e.target.closest('.mode-btn')) return;
   const touch = e.touches[0];
   const now = Date.now();
   const dt = now - lastTapTime;
-  const dx = touch.clientX - lastTapX;
-  const dy = touch.clientY - lastTapY;
-  const dist = Math.sqrt(dx*dx + dy*dy);
-  // Double tap: within 300ms and 40px of last tap
+  const ddx = touch.clientX - lastTapX;
+  const ddy = touch.clientY - lastTapY;
+  const dist = Math.sqrt(ddx*ddx + ddy*ddy);
   if (dt < 300 && dist < 40) {
     e.preventDefault();
     triggerBurst(touch.clientX, touch.clientY);
-    lastTapTime = 0; // reset so triple tap doesn't re-trigger
+    lastTapTime = 0;
   } else {
     lastTapTime = now;
     lastTapX = touch.clientX;
@@ -768,22 +772,24 @@ function triggerBurst(x, y) {
       particles.push(new Spark(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed - 8));
     }
   } else {
-    // Pressure wave: rings all fire at once, half speed
+    // Pressure wave: rings all fire at once, single color per burst
     const tx = x / canvas.width;
     const ty = 1.0 - y / canvas.height;
     const rings = 3;
     const perRing = 16;
+    // One vivid color for the entire burst
+    const burstBase = emitMode === 'fluid' ? generateColor() : null;
     for (let r = 0; r < rings; r++) {
-      const force = cfg.splatForce * (1.0 - r * 0.2); // halved from before
+      const force = cfg.splatForce * (1.0 - r * 0.2);
       const rad = cfg.splatRadius * (1.0 + r * 0.8);
       const offsetScale = r * 0.04;
       for (let i = 0; i < perRing; i++) {
         const angle = (i / perRing) * Math.PI * 2;
         const ox = tx + Math.cos(angle) * offsetScale;
         const oy = ty + Math.sin(angle) * offsetScale;
-        const color = emitMode === 'smoke' ? getSmokeColor() : (() => {
-          const c = generateColor(); return { r: c.r * 6, g: c.g * 6, b: c.b * 6 };
-        })();
+        const color = emitMode === 'smoke'
+          ? getSmokeColor()
+          : { r: burstBase.r * 6, g: burstBase.g * 6, b: burstBase.b * 6 };
         splat(ox, oy, Math.cos(angle) * force, Math.sin(angle) * force, color, rad);
       }
     }
@@ -857,9 +863,10 @@ function update() {
   if (emitMode === 'sparks') {
     const dx = mouseX - lastMouseX, dy = mouseY - lastMouseY;
     const speed = Math.sqrt(dx*dx + dy*dy);
-    // Cap spawn: max 6 per frame, and never exceed 600 total particles
-    const count = Math.min(6, Math.max(2, Math.floor(speed * 0.25)));
-    if (particles.length < 600) {
+
+    if (speed > 1 && particles.length < 600) {
+      // Trail sparks along mouse path — only when moving
+      const count = Math.min(6, Math.floor(speed * 0.25));
       for (let i = 0; i < count; i++) {
         const t = Math.random();
         particles.push(new Spark(
@@ -870,6 +877,25 @@ function update() {
         ));
       }
     }
+
+    // Ambient sparks — always emit in all directions regardless of movement
+    if (particles.length < 600 && Math.random() < 0.7) {
+      const n = 1 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < n; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed2 = 3 + Math.random() * 7;
+        const s = new Spark(
+          mouseX + (Math.random()-0.5)*10,
+          mouseY + (Math.random()-0.5)*10,
+          Math.cos(angle) * speed2,
+          Math.sin(angle) * speed2
+        );
+        s.decay = 0.035 + Math.random() * 0.045;
+        s.size = 0.5 + Math.random() * 0.7;
+        particles.push(s);
+      }
+    }
+
     lastMouseX = mouseX; lastMouseY = mouseY;
 
     // Update — fast removal using swap-with-last to avoid array shifting
