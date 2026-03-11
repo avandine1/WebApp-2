@@ -867,6 +867,7 @@ window.addEventListener('resize', () => {
 });
 
 const particles = [];
+
 class Spark {
   constructor(x, y, vx, vy) {
     this.x = x; this.y = y;
@@ -1023,9 +1024,8 @@ function setMode(mode) {
   document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('btn-' + mode).classList.add('active');
   sparksCanvas.style.display = mode === 'sparks' ? 'block' : 'none';
-  lavaCanvas.style.display = mode === 'lava' ? 'block' : 'none';
-  canvas.style.display = 'block'; // always visible — fluid underlay in lava mode too
-  canvas.style.opacity = '1';
+  lavaCanvas.style.display   = mode === 'lava'   ? 'block' : 'none';
+  canvas.style.display = (mode === 'lava' || mode === 'fluid' || mode === 'smoke') ? 'block' : 'none';
   cfg = modeConfigs[mode] || modeConfigs.fluid;
   if (mode === 'lava') {
     initBlobs();
@@ -1211,10 +1211,6 @@ function update() {
       sx.stroke();
     }
     sx.globalAlpha = 1;
-
-    // Always keep fluid sim ticking in background (so switching back looks alive)
-    step(dt, cfg);
-    render(null);
 
   } else {
     // Fluid / Smoke via WebGL
